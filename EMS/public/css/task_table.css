@@ -22,8 +22,3 @@ body {
 .table{
     font-size: large;
 }
-
-.task-table {
-    table-layout: fixed;
-    width: 100%;
-}
