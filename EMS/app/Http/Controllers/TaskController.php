@@ -117,7 +117,14 @@ class TaskController extends Controller
 
         $output = '';
         if ($tasks->count() > 0) {
-            $output .= '<table class="table align-middle text-center" >
+            $output .= '<table class="table align-middle text-center task-table">
+            <colgroup>
+                <col style="width: 8%">
+                <col style="width: 44%">
+                <col style="width: 16%">
+                <col style="width: 16%">
+                <col style="width: 16%">
+            </colgroup>
             <thead>
             <tr class="border-dark ">
                 <th class="align-middle" >#</th>
@@ -138,11 +145,13 @@ class TaskController extends Controller
                         <td>' . $task->task_name . '</td>
                         <td>
                             <button id="' . $task->id . '" class="btn btn-primary btn-sm mx-1 my-1 editTask" data-bs-toggle="modal" title="edit tasks"><i class="bx bx-edit" style="font-size: 20px"></i></button>
-                            <button id="' . $task->id . '" class="btn btn-success btn-sm mx-1 my-1 addAttach"  title="add attachment"><i class="bx bxs-file-plus" style="font-size: 20px"></i></button>
-                            <button id="' . $task->id . '" class="btn btn-danger btn-sm mx-1 my-1 delTask"  title="delete task"><i class="bx bxs-trash" style="font-size: 20px"></i></button>
                         </td>
-                        <td></td>
-                        <td></td>
+                        <td>
+                            <button id="' . $task->id . '" class="btn btn-success btn-sm mx-1 my-1 addAttach" title="add attachment"><i class="bx bxs-file-plus" style="font-size: 20px"></i></button>
+                        </td>
+                        <td>
+                            <button id="' . $task->id . '" class="btn btn-danger btn-sm mx-1 my-1 delTask" title="delete task"><i class="bx bxs-trash" style="font-size: 20px"></i></button>
+                        </td>
                     </tr>';
                 } else {
                     $attchCount = $attachments->count();    //number of total attchments in a task
@@ -150,10 +159,14 @@ class TaskController extends Controller
                     <tr class="border-dark">
                         <td rowspan="' . ($attchCount + 1) . '">' . ++$key . '</td>
                         <td rowspan="' . ($attchCount + 1) . '">' . $task->task_name . '</td>
-                        <td rowspan="' . ($attchCount + 1) . '" >
+                        <td rowspan="' . ($attchCount + 1) . '" class="align-top">
                             <button id="' . $task->id . '" class="btn btn-primary btn-sm mx-1 my-1 editTask" data-bs-toggle="modal" title="edit tasks"><i class="bx bx-edit" style="font-size: 20px"></i></button>
-                            <button id="' . $task->id . '" class="btn btn-success btn-sm mx-1 my-1 addAttach"  title="add attachment"><i class="bx bxs-file-plus" style="font-size: 20px"></i></button>
-                            <button id="' . $task->id . '" class="btn btn-danger btn-sm mx-1 my-1 delTask"  title="delete task"><i class="bx bxs-trash" style="font-size: 20px"></i></button>
+                        </td>
+                        <td>
+                            <button id="' . $task->id . '" class="btn btn-success btn-sm mx-1 my-1 addAttach" title="add attachment"><i class="bx bxs-file-plus" style="font-size: 20px"></i></button>
+                        </td>
+                        <td>
+                            <button id="' . $task->id . '" class="btn btn-danger btn-sm mx-1 my-1 delTask" title="delete task"><i class="bx bxs-trash" style="font-size: 20px"></i></button>
                         </td>
                     </tr>';
 
