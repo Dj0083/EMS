@@ -16,6 +16,7 @@ use Illuminate\Http\Request;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Validation\Rule;
 
 use Illuminate\Support\Facades\Log;
 use League\CommonMark\Node\Inline\Newline;
@@ -241,6 +242,8 @@ class AnnualEventController extends Controller
             ])
             ->first();
 
+        abort_unless($runnigEvent, 404);
+
         $eventTypeName = DB::table('event_types')
             ->select('event_types.event_type')
             ->leftJoin('new_event', 'new_event.event_type_id', '=', 'event_types.id')
@@ -258,7 +261,7 @@ class AnnualEventController extends Controller
                 'instance_tasks_assign.assigned_emp_id',
                 'instance_tasks_assign.status AS emp_status'
             )
-            ->leftJoin('tasks', 'tasks.id', '=', 'event_instance_tasks.tasks_id')
+            ->join('tasks', 'tasks.id', '=', 'event_instance_tasks.tasks_id')
             ->leftJoin('instance_tasks_assign', 'instance_tasks_assign.event_instance_task_id', '=', 'event_instance_tasks.id')
             ->where([
                 'event_instance_tasks.new_event_id' => $newEventId,
@@ -289,13 +292,55 @@ class AnnualEventController extends Controller
             ->groupBy('task_id')
             ->toArray();
 
+        $assignedTaskIds = EventInstanceTask::where('new_event_id', $newEventId)
+            ->pluck('tasks_id');
+        $availableTasks = Task::where('event_type_id', $runnigEvent->event_type_id)
+            ->whereNotIn('id', $assignedTaskIds)
+            ->orderBy('task_name')
+            ->get(['id', 'task_name']);
+
         return view('pages.space_event_type.runnigEvents', [
             'runnigEvent' => $runnigEvent,
             'eventTypeName' => $eventTypeName,
             'eventinstancetasks' => $eventinstancetasks,
             'assignedEmployees' => $assignedEmployees,
-            'assignedList' => $assignedList
+            'assignedList' => $assignedList,
+            'availableTasks' => $availableTasks
         ]);
+    }
+
+    public function addTasksToEvent(Request $request, $newEventId)
+    {
+        $event = NewEvent::findOrFail($newEventId);
+        abort_unless($event->active_status === 'running', 404);
+
+        $validated = $request->validate([
+            'tasks' => ['required', 'array', 'min:1'],
+            'tasks.*' => [
+                'required',
+                'integer',
+                'distinct',
+                Rule::exists('tasks', 'id')->where(function ($query) use ($event) {
+                    $query->where('event_type_id', $event->event_type_id);
+                }),
+            ],
+        ]);
+
+        DB::transaction(function () use ($validated, $event) {
+            foreach ($validated['tasks'] as $taskId) {
+                EventInstanceTask::firstOrCreate(
+                    [
+                        'new_event_id' => $event->id,
+                        'tasks_id' => $taskId,
+                    ],
+                    ['status' => 'Todo']
+                );
+            }
+        });
+
+        return redirect()
+            ->route('space_event.runnigEvents', $event->id)
+            ->with('success', 'Tasks added to this event.');
     }
 
     public function editRunningEvent($id)
@@ -530,11 +575,21 @@ class AnnualEventController extends Controller
             ]);
         }
 
-        // Validation rules
+        $eventTypeId = $request->input('event_type_id');
         $validator = Validator::make($request->all(), [
             'event_name' => 'required|string',
+            'event_type_id' => 'required|integer|exists:event_types,id',
             'start_date' => 'required|date|after_or_equal:today',
-            'end_date' => 'required|date|after_or_equal:start_date'
+            'end_date' => 'required|date|after_or_equal:start_date',
+            'tasks' => 'sometimes|array',
+            'tasks.*' => [
+                'required',
+                'integer',
+                'distinct',
+                Rule::exists('tasks', 'id')->where(function ($query) use ($eventTypeId) {
+                    $query->where('event_type_id', $eventTypeId);
+                }),
+            ],
         ]);
 
         // Check if validation failed
@@ -548,43 +603,31 @@ class AnnualEventController extends Controller
         Log::info('Validation passed');
 
         try {
-            // Create the new event from Manage Events
-            $createdEvent = NewEvent::create([
-                'event_name' => $request->event_name,
-                'event_type_id' => $request->event_type_id,
-                'start_date' => $request->start_date,
-                'end_date' => $request->end_date,
-                'coordinator' => $request->coordinator,
-                'active_status' => 'running'
-            ]);
+            $validated = $validator->validated();
+            $createdEvent = DB::transaction(function () use ($request, $validated) {
+                $event = NewEvent::create([
+                    'event_name' => $validated['event_name'],
+                    'event_type_id' => $validated['event_type_id'],
+                    'start_date' => $validated['start_date'],
+                    'end_date' => $validated['end_date'],
+                    'coordinator' => $request->coordinator,
+                    'active_status' => 'running'
+                ]);
 
-            // Handle tasks
-            $taskNames = $request->input('tasks', []);
-            Log::info($taskNames);
-            foreach ($taskNames as $taskName) {
-                //Log::info( $taskName);
-                try {
+                foreach ($validated['tasks'] ?? [] as $taskId) {
                     EventInstanceTask::create([
-                        'new_event_id' => $createdEvent->id,
-                        'tasks_id' => $taskName,
-                        'status' => 'todo'
-                    ]);
-                    //Log::info('SubTask created', ['taskName' => $taskName]);
-                } catch (\Exception $e) {
-                    Log::error('Error creating SubTask', ['exception' => $e->getMessage()]);
-                    // Rollback the event creation if a subtask fails
-                    $createdEvent->delete(); // Remove the created event
-                    return response()->json([
-                        'success' => false,
-                        'message' => 'Failed to create tasks for the event.'
+                        'new_event_id' => $event->id,
+                        'tasks_id' => $taskId,
+                        'status' => 'Todo'
                     ]);
                 }
-            }
 
+                return $event;
+            });
 
             return response()->json([
                 'success' => true,
-                'message' => 'Event created successfully.', //notifyies when created a new Event in Manage Event -> Create New
+                'message' => 'Event created successfully.',
                 'event_id' => $createdEvent->id
             ]);
         } catch (\Exception $e) {
@@ -629,65 +672,65 @@ class AnnualEventController extends Controller
         ]);
     }
 
-    // public function updateTaskAssignStatus(Request $request)
-    // {
-    //     $request->validate([
-    //         'task_id' => 'required|integer',
-    //         'emp_id' => 'required|integer',
-    //         'status' => 'required|in:done,todo',
-    //     ]);
-
-    //     DB::table('instance_tasks_assign')
-    //         ->where('task_id', $request->task_id)
-    //         ->where('emp_id', $request->emp_id)
-    //         ->update(['status' => $request->status]);
-
-    //     return response()->json(['success' => true]);
-    // }
     public function updateTaskAssignStatus(Request $request)
     {
-        ini_set('display_errors', 1);
-        ini_set('display_startup_errors', 1);
-        error_reporting(E_ALL);
+        $validated = $request->validate([
+            'event_instance_task_id' => 'required|integer|exists:event_instance_tasks,id',
+            'assigned_emp_id' => 'required|integer|exists:assigned_emp,id',
+            'completed' => 'required|boolean',
+        ]);
 
-        $assignment = new InstanceTasksAssign();
-        $assignment->status = 'Done';
-        $assignment->event_instance_task_id = $request->event_instance_task_id;
-        $assignment->assigned_emp_id = $request->assigned_emp_id;
+        $eventTask = EventInstanceTask::findOrFail($validated['event_instance_task_id']);
+        $event = NewEvent::findOrFail($eventTask->new_event_id);
+        abort_unless($event->active_status === 'running', 404);
 
-        if ($assignment->save()) {
-            // Count total employees assigned to the task
-            $totalAssignedCount = AssignedEmployee::where('task_id', function ($query) use ($request) {
-                $query->select('task_id')
-                    ->from('assigned_emp')
-                    ->where('id', $request->assigned_emp_id)
-                    ->limit(1);
-            })->count();
+        AssignedEmployee::where('id', $validated['assigned_emp_id'])
+            ->where('task_id', $eventTask->tasks_id)
+            ->firstOrFail();
 
-            $completedCount = InstanceTasksAssign::where('event_instance_task_id', $request->event_instance_task_id)
-                ->count();
+        DB::transaction(function () use ($validated, $eventTask) {
+            $completionQuery = InstanceTasksAssign::where('event_instance_task_id', $eventTask->id)
+                ->where('assigned_emp_id', $validated['assigned_emp_id']);
 
-            // // If all assigned employees have completed the task, update task status to "Done"
-            if ($totalAssignedCount == $completedCount) {
-                $inst = EventInstanceTask::find($request->event_instance_task_id);
-                if ($inst) {
-                    $inst->status = 'Done';
-                    // $inst->updated_at = 
-                    $inst->save();
+            if ($validated['completed']) {
+                $completion = $completionQuery->orderBy('id')->first();
+
+                if ($completion) {
+                    $completion->update(['status' => 'Done']);
+                    InstanceTasksAssign::where('event_instance_task_id', $eventTask->id)
+                        ->where('assigned_emp_id', $validated['assigned_emp_id'])
+                        ->where('id', '!=', $completion->id)
+                        ->delete();
                 } else {
-                    dd('Task not found');
+                    InstanceTasksAssign::create([
+                        'event_instance_task_id' => $eventTask->id,
+                        'assigned_emp_id' => $validated['assigned_emp_id'],
+                        'status' => 'Done',
+                    ]);
                 }
+            } else {
+                $completionQuery->delete();
             }
 
-            return response()->json([
-                'success' => true,
-                'message' => 'Task status updated successfully.'
-            ]);
-        }
+            $assignedEmployeeIds = AssignedEmployee::where('task_id', $eventTask->tasks_id)
+                ->pluck('id');
+            $completedEmployeeCount = InstanceTasksAssign::where('event_instance_task_id', $eventTask->id)
+                ->whereIn('assigned_emp_id', $assignedEmployeeIds)
+                ->pluck('assigned_emp_id')
+                ->unique()
+                ->count();
+
+            $eventTask->status = $assignedEmployeeIds->isNotEmpty()
+                && $completedEmployeeCount === $assignedEmployeeIds->count()
+                ? 'Done'
+                : 'Todo';
+            $eventTask->save();
+        });
 
         return response()->json([
-            'success' => false,
-            'message' => 'Failed to update status.'
+            'success' => true,
+            'message' => 'Task status updated successfully.',
+            'status' => $eventTask->status,
         ]);
     }
 

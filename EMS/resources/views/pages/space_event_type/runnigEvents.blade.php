@@ -122,8 +122,27 @@ Running Event
 
         <!-- Section 2: Task List -->
         <div class="section2">
-            <h4 class="text-center font-weight-bold">Task List</h4>
-            <br />
+            <div class="d-flex justify-content-between align-items-center mb-3">
+                <h4 class="text-center font-weight-bold mb-0">Task List</h4>
+                @if ($availableTasks->isNotEmpty())
+                <button type="button" class="btn btn-primary btn-sm" data-bs-toggle="modal" data-bs-target="#addTasksModal">
+                    Add Tasks
+                </button>
+                @endif
+            </div>
+            <p class="small text-muted">
+                Check each employee when their part is complete. The task becomes Done when all assigned employees are checked.
+                Uncheck an employee to return the task to To do.
+            </p>
+
+            @if (session('success'))
+            <div class="alert alert-success">{{ session('success') }}</div>
+            @endif
+
+            @if ($errors->any())
+            <div class="alert alert-danger">{{ $errors->first() }}</div>
+            @endif
+
             <div class="card border-0 shadow-lg">
                 <div class="card-body">
                     <table class="table table-striped">
@@ -135,9 +154,16 @@ Running Event
                             </tr>
                         </thead>
                         <tbody>
+                            @if (empty($eventinstancetasks))
+                            <tr>
+                                <td colspan="3" class="text-center text-muted">
+                                    No tasks have been added to this event yet.
+                                </td>
+                            </tr>
+                            @endif
                             @foreach ($eventinstancetasks as $eventinstancetask)
                             <tr>
-                                <td>{{ $eventinstancetask['task_name'] ?? 'N/A' }}</td>
+                                <td>{{ $eventinstancetask['task_name'] }}</td>
                                 <td>
                                     @php
 
@@ -152,16 +178,13 @@ Running Event
                                     @if (isset($employees))
                                     <ul class="mb-0 ps-3">
                                         @foreach ($employees as $emp)
-                                        @php
-                                        $assTaskId = '';
-                                        $empStatus = '';
-                                        @endphp
                                         <li>
                                             {{ $emp->emp_name }}
                                             <input type="checkbox"
-                                                onclick="updateStatus('<?= $eventinstancetask['id'] ?>', '{{ $emp->id }}')"
-                                                class="form-check-input me-1" id="chk_<?= $eventinstancetask['id']; ?>_<?= $emp->id; ?>"
-                                                <?= (isset($assignedList[$eventinstancetask['id']][$emp->id]) && $assignedList[$eventinstancetask['id']][$emp->id]['emp_status'] == 'Done') ? 'disabled checked="checked"' : ''; ?>>
+                                                onchange="updateStatus('{{ $eventinstancetask['id'] }}', '{{ $emp->id }}', this)"
+                                                class="form-check-input me-1"
+                                                id="chk_{{ $eventinstancetask['id'] }}_{{ $emp->id }}"
+                                                @if (isset($assignedList[$eventinstancetask['id']][$emp->id]) && $assignedList[$eventinstancetask['id']][$emp->id]['emp_status'] == 'Done') checked @endif>
                                         </li>
                                         @endforeach
                                     </ul>
@@ -186,6 +209,50 @@ Running Event
             </div>
         </div>
     </div>
+
+    @if ($availableTasks->isNotEmpty())
+    <div class="modal fade" id="addTasksModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog">
+            <form method="POST" action="{{ route('space_event.tasks.store', $runnigEvent->id) }}">
+                @csrf
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title">Add Tasks to {{ $runnigEvent->event_name }}</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        @if ($errors->any())
+                        <div class="alert alert-danger">
+                            {{ $errors->first() }}
+                        </div>
+                        @endif
+                        @foreach ($availableTasks as $availableTask)
+                        <div class="form-check">
+                            <input class="form-check-input" type="checkbox" name="tasks[]"
+                                value="{{ $availableTask->id }}" id="add-task-{{ $availableTask->id }}">
+                            <label class="form-check-label" for="add-task-{{ $availableTask->id }}">
+                                {{ $availableTask->task_name }}
+                            </label>
+                        </div>
+                        @endforeach
+                    </div>
+                    <div class="modal-footer">
+                        <button type="button" class="btn btn-secondary" data-bs-dismiss="modal">Cancel</button>
+                        <button type="submit" class="btn btn-primary">Add Selected Tasks</button>
+                    </div>
+                </div>
+            </form>
+        </div>
+    </div>
+    @endif
+
+    @if ($errors->any() && $availableTasks->isNotEmpty())
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            bootstrap.Modal.getOrCreateInstance(document.getElementById('addTasksModal')).show();
+        });
+    </script>
+    @endif
 
     {{-- Edit Modal --}}
     <!-- Edit Modal -->
@@ -234,24 +301,35 @@ Running Event
     </div>
 
     <script>
-        function updateStatus(taskId, empId) {
+        function updateStatus(taskId, empId, checkbox) {
+            const completed = checkbox.checked;
+
             Swal.fire({
-                title: 'Are you sure?',
-                text: "You are about to change the task status.",
+                title: completed ? 'Mark as done?' : 'Move back to To do?',
+                text: completed
+                    ? 'This employee will be marked as finished.'
+                    : 'This employee will no longer be marked as finished.',
                 icon: 'warning',
                 showCancelButton: true,
-                confirmButtonText: 'Yes, update it!'
+                confirmButtonText: completed ? 'Mark done' : 'Set to To do'
             }).then((result) => {
-                if (result.isConfirmed) {
-                    fetch("{{ url('/update-task-status') }}", { // <-- use full URL
+                if (!result.isConfirmed) {
+                    checkbox.checked = !completed;
+                    return;
+                }
+
+                checkbox.disabled = true;
+                fetch("{{ url('/update-task-status') }}", {
                             method: 'POST',
                             headers: {
                                 'Content-Type': 'application/json',
+                                'Accept': 'application/json',
                                 'X-CSRF-TOKEN': document.querySelector('meta[name="csrf-token"]').getAttribute('content')
                             },
                             body: JSON.stringify({
                                 event_instance_task_id: taskId,
-                                assigned_emp_id: empId
+                                assigned_emp_id: empId,
+                                completed: completed
                             })
                         })
                         .then(response => {
@@ -260,20 +338,20 @@ Running Event
                         })
                         .then(data => {
                             if (data.success) {
-                                Swal.fire('Updated!', data.message, 'success');
-                                const checkbox = document.getElementById('chk_' + taskId + '_' + empId);
-                                checkbox.disabled = true;
+                                Swal.fire('Updated!', data.message, 'success')
+                                    .then(() => location.reload());
                             } else {
                                 Swal.fire('Oops!', data.message, 'error');
+                                checkbox.checked = !completed;
+                                checkbox.disabled = false;
                             }
                         })
                         .catch(error => {
                             console.error('Error:', error);
                             Swal.fire('Oops!', 'Something went wrong.', 'error');
+                            checkbox.checked = !completed;
+                            checkbox.disabled = false;
                         });
-                } else {
-                    $('#chk_' + taskId + '_' + empId).prop('checked', false);
-                }
             });
         }
 

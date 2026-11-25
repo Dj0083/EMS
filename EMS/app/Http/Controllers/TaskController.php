@@ -6,8 +6,12 @@ use Carbon\Carbon;
 use App\Models\Task;
 use App\Models\EventType;
 use App\Models\Attachment;
+use App\Models\AssignedEmployee;
+use App\Models\EventInstanceTask;
+use App\Models\InstanceTasksAssign;
 use Illuminate\Http\Request;
 use Illuminate\Http\UploadedFile;
+use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Validator;
@@ -361,28 +365,36 @@ class TaskController extends Controller
     }
 
     /**
-     * Deletes a task record from the database.
-     *
-     * This function checks if the task has any attachments before deleting the record.
-     * If the task has attachments, it returns a JSON response indicating failure.
-     * If the task does not have attachments, it deletes the task record and returns a JSON response indicating success.
-     *
-     * @param Request $request The incoming request containing the task ID.
-     * @return \Illuminate\Http\JsonResponse The JSON response indicating the success or failure of the deletion operation.
-     *
-     * @author Hansana Sandeepa <hansana.s.somarathna@gmail.com>
+     * Deletes a task and all of its event-list records when it has no attachments.
      */
     public function deleteTask(Request $request)
     {
-        $taskId = $request->id;
+        $validated = $request->validate([
+            'id' => 'required|integer|exists:tasks,id',
+        ]);
+        $taskId = $validated['id'];
         Log::info($request);
-        $task = Task::find($taskId);
+        $task = Task::findOrFail($taskId);
         $hasAttachments = $task->attachments()->exists();
 
         if ($hasAttachments) {
             return response()->json(['success' => false]);
         } else {
-            Task::destroy($taskId);
+            DB::transaction(function () use ($task, $taskId) {
+                $eventInstanceIds = EventInstanceTask::where('tasks_id', $taskId)
+                    ->pluck('id');
+
+                InstanceTasksAssign::whereIn('event_instance_task_id', $eventInstanceIds)
+                    ->delete();
+
+                AssignedEmployee::where('task_id', $taskId)
+                    ->orWhereIn('task_id', $eventInstanceIds)
+                    ->delete();
+
+                EventInstanceTask::whereIn('id', $eventInstanceIds)->delete();
+                $task->delete();
+            });
+
             return response()->json(['success' => true]);
         }
     }

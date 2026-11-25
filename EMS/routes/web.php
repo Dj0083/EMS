@@ -71,6 +71,7 @@ Route::get('/space_event/completedEvents/{eventTypeId}', [AnnualEventController:
 Route::get('/space_event/completedEvents/completedEvent/{eventTypeId}', [AnnualEventController::class, 'completedEvent'])->name('space_event.completedEvents.completedEvent');
 Route::get('/space_event/runnigEvent/{eventTypeId}', [AnnualEventController::class, 'runnigEvent'])->name('space_event.runnigEvent');
 Route::get('/space_event/runnigEvents/{newEventId}', [AnnualEventController::class, 'runnigEvents'])->name('space_event.runnigEvents');    //used when there are MULTIPLE RUNNING EVENTS present in the same event type
+Route::post('/space_event/{newEventId}/tasks', [AnnualEventController::class, 'addTasksToEvent'])->name('space_event.tasks.store');
 
 Route::post('/instance-task-assign/update-status', [AnnualEventController::class, 'updateTaskAssignStatus'])->name('instance_task_assign.updateStatus');
 Route::post('/update-task-status', [AnnualEventController::class, 'updateTaskAssignStatus']);
